@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Day length and latitude — why Berlin gets so dark</title>
+<style>
+  :root {
+    --ink: #f6f1e8;
+    --dim: #94a1b2;
+    --warm: #ffb454;          /* the ~40.8°N parallel: the good daylight */
+    --cold: #7fb2ff;          /* Berlin's parallel: the long nights */
+    --panel: rgba(9, 14, 24, 0.74);
+    --line: rgba(255, 255, 255, 0.11);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #05070d;
+    color: var(--ink);
+    font: 400 15px/1.5 ui-sans-serif, -apple-system, "Helvetica Neue", sans-serif;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  header {
+    position: fixed; top: 0; left: 0; right: 0; padding: 26px 30px;
+    pointer-events: none; z-index: 5;
+    background: linear-gradient(#05070d 0%, rgba(5,7,13,0.84) 44%, rgba(5,7,13,0.42) 78%, transparent 100%);
+    text-shadow: 0 1px 16px rgba(5,7,13,0.95);
+  }
+  .eyebrow {
+    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--warm); margin: 0 0 8px;
+  }
+  h1 {
+    margin: 0; font-weight: 400; font-size: clamp(22px, 3.3vw, 38px);
+    letter-spacing: -0.01em; font-family: ui-serif, Georgia, "Times New Roman", serif;
+  }
+  h1 em { font-style: normal; color: var(--cold); }
+  .sub { margin: 11px 0 0; color: #c3ccd8; font-size: 14px; max-width: 60ch; }
+  .sub b { color: var(--ink); font-weight: 500; }
+
+  #panel {
+    position: fixed; left: 30px; bottom: 30px; z-index: 5;
+    width: 384px; padding: 18px 20px;
+    background: var(--panel); backdrop-filter: blur(14px);
+    border: 1px solid var(--line); border-radius: 14px;
+  }
+  #panel h2 {
+    margin: 0 0 4px; font-size: 10px; letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--dim); font-weight: 500;
+  }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th {
+    font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: #6d7888; font-weight: 500; text-align: right; padding: 0 0 6px;
+  }
+  th:first-child { text-align: left; }
+  td {
+    font-size: 12px; padding: 6px 0; border-top: 1px solid var(--line);
+    text-align: right; white-space: nowrap;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  td:first-child {
+    text-align: left; font-family: inherit; font-size: 13px;
+  }
+  tr.cold td:first-child { color: var(--cold); }
+  tr.cold td.short { color: var(--cold); }
+  tr.warm td.short { color: var(--warm); }
+  .verdict {
+    margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line);
+    font-size: 12.5px; color: var(--dim); line-height: 1.45;
+  }
+  .verdict strong { color: var(--ink); font-weight: 500; }
+  .verdict .gain { color: var(--warm); }
+  .verdict .loss { color: var(--cold); }
+
+  #controls {
+    position: fixed; right: 30px; bottom: 30px; z-index: 5;
+    display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  }
+  button {
+    font: inherit; font-size: 13px; color: var(--ink); cursor: pointer;
+    padding: 9px 15px; border-radius: 999px;
+    background: var(--panel); backdrop-filter: blur(14px);
+    border: 1px solid var(--line);
+    transition: border-color .18s, color .18s, background .18s;
+  }
+  button:hover { border-color: rgba(255,180,84,.55); color: var(--warm); }
+  button.on { background: rgba(255,180,84,.18); border-color: rgba(255,180,84,.6); color: var(--warm); }
+  button.cold:hover { border-color: rgba(127,178,255,.6); color: var(--cold); }
+  .hint { font-size: 11px; color: #5d6775; margin-top: 4px; letter-spacing: .04em; }
+
+  /* A zero-size anchor pinned exactly at the stalk tip. The pill is positioned
+     off it absolutely — NOT with a second transform, which used to compound
+     with a translate(-50%) here and leave every pill half its own width adrift. */
+  .label {
+    position: fixed; z-index: 4; width: 0; height: 0;
+    pointer-events: none; white-space: nowrap; transition: opacity .25s;
+  }
+  /* top:0 + translateY(-50%) centres the pill vertically ON the stalk tip, so
+     the only gap is the 12px horizontal one the connector covers. Offsetting it
+     upwards as well is what made it look detached. */
+  .label .pill {
+    position: absolute; left: 12px; top: 0; transform: translateY(-50%);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; letter-spacing: .03em;
+    background: rgba(5,7,13,.86); border: 1px solid rgba(255,180,84,.45);
+    color: var(--ink);
+  }
+  .label.flip .pill { left: auto; right: 12px; }
+  .label.cold .pill { border-color: rgba(127,178,255,.55); }
+  .label .pill small {
+    font-size: 11px; margin-left: 7px; color: var(--warm);
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .label.cold .pill small { color: var(--cold); }
+
+  /* Leader lines, drawn only when de-collision has pushed a pill off its tip. */
+  /* width/height are explicit: an <svg> is a replaced element, so inset alone
+     can leave it at its intrinsic 300x150 and clip the lines. */
+  #leaders {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    z-index: 3; pointer-events: none;
+  }
+  #leaders line { stroke: rgba(255,180,84,.45); stroke-width: 1; }
+  #leaders line.cold { stroke: rgba(127,178,255,.5); }
+
+  #note {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    z-index: 6; color: var(--dim); font-size: 13px; text-align: center;
+  }
+  @media (max-width: 860px) {
+    header { padding: 18px; }
+    #panel { left: 14px; right: 14px; bottom: 72px; width: auto; }
+    #controls { right: 14px; bottom: 14px; flex-direction: row; flex-wrap: wrap-reverse;
+                justify-content: flex-end; max-width: calc(100% - 28px); }
+    button { padding: 7px 12px; font-size: 12px; }
+    .hint { display: none; }
+    .sub { font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<svg id="leaders"></svg>
+
+<header>
+  <p class="eyebrow">Day length at the solstices</p>
+  <h1>Day length is just latitude — which is why Berlin gets <em>so dark</em>.</h1>
+  <p class="sub" id="sub">&nbsp;</p>
+</header>
+
+<div id="panel">
+  <h2>Hours of daylight</h2>
+  <table>
+    <thead>
+      <tr><th>City</th><th>Lat</th><th>Shortest</th><th>Longest</th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div class="verdict" id="verdict">—</div>
+</div>
+
+<div id="controls">
+  <button id="btn-spin" class="on">Spin</button>
+  <button id="btn-all">Frame both parallels</button>
+  <button id="btn-edge-cold" class="cold">Edge-on: Berlin ↔ Irkutsk</button>
+  <button id="btn-edge-warm">Edge-on: Manhattan ↔ Istanbul</button>
+  <button id="btn-ber" class="cold">Berlin</button>
+  <button id="btn-irk" class="cold">Irkutsk</button>
+  <button id="btn-nyc">Manhattan</button>
+  <button id="btn-ist">Istanbul</button>
+  <button id="btn-yal">Yalova</button>
+  <div class="hint">drag to orbit · scroll to zoom</div>
+</div>
+
+<div id="note">Loading globe…</div>
+
+<script>
+  setTimeout(() => {
+    if (window.__globeReady) return;
+    const n = document.getElementById('note');
+    if (n) n.innerHTML = 'Could not reach the three.js CDN.<br>' +
+      'This page needs a network connection the first time it loads.';
+  }, 7000);
+</script>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ------------------------------------------------------------------ data */
+// `lift` is how far the label floats off the surface. Istanbul and Yalova are
+// 25 km apart, so without different lifts their labels sit on top of each other.
+const CITIES = [
+  { key: 'ber', name: 'Berlin',    lat: 52.5200, lon:  13.4050, cold: true, lift: 1.24 },
+  { key: 'irk', name: 'Irkutsk',   lat: 52.2833, lon: 104.3000, cold: true, lift: 1.14 },
+  { key: 'nyc', name: 'Manhattan', lat: 40.7831, lon: -73.9712,             lift: 1.20 },
+  // Istanbul's pill hangs left by preference: it has the longest stalk, so on the
+  // edge-on views it would otherwise sit right on top of the Berlin–Irkutsk line.
+  { key: 'ist', name: 'Istanbul',  lat: 41.0082, lon:  28.9784,             lift: 1.34,
+    prefer: 'left' },
+  { key: 'yal', name: 'Yalova',    lat: 40.6550, lon:  29.2769,             lift: 1.10 },
+];
+// Keyed rather than indexed, so adding a city can't silently rebind these.
+const { ber: BER, irk: IRK, nyc: NYC, ist: IST, yal: YAL } =
+  Object.fromEntries(CITIES.map(c => [c.key, c]));
+
+const R = 1;
+const WARM_LAT = NYC.lat;            // the parallel the three southern cities share
+const COLD_LAT = BER.lat;
+const MID_LON = -28;                 // roughly halfway between Manhattan and Berlin
+const COLD_MID_LON = (BER.lon + IRK.lon) / 2;   // halfway along Berlin → Irkutsk
+const WARM = 0xffb454, COLD = 0x7fb2ff;
+
+/* ------------------------------------------------------- daylight length */
+// Sunrise equation with the standard -0.833° horizon correction (refraction +
+// the sun's own radius), which is what almanacs use. Declination is ±23.44° at
+// the solstices.
+function daylightHours(latDeg, declDeg) {
+  const lat = latDeg * Math.PI / 180, dec = declDeg * Math.PI / 180;
+  const h0 = -0.833 * Math.PI / 180;
+  let c = (Math.sin(h0) - Math.sin(lat) * Math.sin(dec)) /
+          (Math.cos(lat) * Math.cos(dec));
+  c = Math.min(1, Math.max(-1, c));
+  return 24 * Math.acos(c) / Math.PI;
+}
+const shortest = c => daylightHours(c.lat, -23.44);
+const longest  = c => daylightHours(c.lat,  23.44);
+
+function hm(hours) {
+  let h = Math.floor(hours), m = Math.round((hours - h) * 60);
+  if (m === 60) { h += 1; m = 0; }
+  return `${h}h ${String(m).padStart(2, '0')}m`;
+}
+// 2dp keeps the north/south ordering visible (41.01 / 40.78 / 40.66) while
+// leaving the table and the label pills narrow enough not to collide.
+const fmtLat = v => `${Math.abs(v).toFixed(2)}°${v >= 0 ? 'N' : 'S'}`;
+
+CITIES.forEach(c => { c.short = shortest(c); c.long = longest(c); });
+
+/* ----------------------------------------------------------- the readout */
+document.getElementById('tbody').innerHTML = CITIES.map(c => `
+  <tr class="${c.cold ? 'cold' : 'warm'}">
+    <td>${c.name}</td>
+    <td>${fmtLat(c.lat)}</td>
+    <td class="short">${hm(c.short)}</td>
+    <td>${hm(c.long)}</td>
+  </tr>`).join('');
+
+const winterGain = NYC.short - BER.short;      // what you'd gain in December
+const summerLoss = BER.long  - NYC.long;       // what you'd pay for it in June
+const latGap     = BER.lat - NYC.lat;
+
+// Differences are taken between the ROUNDED minute values, not the raw hours, so
+// the prose always agrees with the table a reader is comparing it against. Raw
+// subtraction disagrees: Istanbul's true gap is 1.43 min but the table shows 2.
+const mins = h => Math.round(h * 60);
+const istShortfall = mins(NYC.short) - mins(IST.short);
+const irkEdge      = mins(IRK.short) - mins(BER.short);
+const minutes = n => `${n} minute${n === 1 ? '' : 's'}`;
+const km = d => Math.round(d * 111.32).toLocaleString('en-US');
+
+document.getElementById('sub').innerHTML =
+  `Istanbul feels a world away from Manhattan, yet it sits ${km(IST.lat - NYC.lat)} km
+   <b>further north</b> — and gets ${minutes(istShortfall)} <i>less</i> winter daylight.
+   Manhattan's real twin is <b>Yalova</b>, ${km(NYC.lat - YAL.lat)} km to the south:
+   <b>${hm(YAL.short)}</b> on the shortest day, matching to the minute.
+   Berlin is the outlier — ${km(latGap)} km north of all three, which is why its
+   winters go so dark. At <b>${hm(BER.short)}</b> it is within ${minutes(irkEdge)} of
+   <b>Irkutsk</b>, in Siberia.`;
+
+document.getElementById('verdict').innerHTML =
+  `Leaving Berlin's parallel for Manhattan's buys you
+   <strong class="gain">+${hm(winterGain)}</strong> of light on the darkest day —
+   and costs you <strong class="loss">−${hm(summerLoss)}</strong> on the brightest.
+   The long nights and the long summer evenings are the same bargain.`;
+
+/* ----------------------------------------------------------------- scene */
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.01, 100);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.28;
+document.getElementById('stage').appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 1.25;
+controls.maxDistance = 8;
+controls.enablePan = false;
+controls.autoRotateSpeed = 0.35;
+
+function toVec3(lat, lon, r = R) {
+  const phi   = (90 - lat) * Math.PI / 180;
+  const theta = (lon + 180) * Math.PI / 180;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+/* ----------------------------------------------------------------- earth */
+const globe = new THREE.Group();
+scene.add(globe);
+
+const earthMat = new THREE.MeshStandardMaterial({
+  color: 0x7892ad, roughness: 0.92, metalness: 0.0,
+});
+globe.add(new THREE.Mesh(new THREE.SphereGeometry(R, 128, 96), earthMat));
+
+new THREE.TextureLoader().load(
+  'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/earth_atmos_2048.jpg',
+  tex => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    earthMat.map = tex;
+    // Re-use the albedo as a dim emissive so the night side stays readable
+    // instead of going black — this is an explainer, not a renderer demo.
+    earthMat.emissiveMap = tex;
+    earthMat.emissive = new THREE.Color(0xffffff);
+    earthMat.emissiveIntensity = 0.3;
+    earthMat.color.set(0xffffff);
+    earthMat.needsUpdate = true;
+  },
+  undefined,
+  () => toast('Map texture offline — showing the bare globe.')
+);
+
+function toast(msg, ms = 3200) {
+  const el = document.createElement('div');
+  el.id = 'note';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+const atmo = new THREE.Mesh(
+  new THREE.SphereGeometry(R * 1.035, 96, 64),
+  new THREE.ShaderMaterial({
+    transparent: true, side: THREE.BackSide, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    vertexShader: `varying vec3 vN; varying vec3 vP;
+      void main(){ vN = normalize(normalMatrix * normal);
+        vec4 mv = modelViewMatrix * vec4(position,1.0); vP = mv.xyz;
+        gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `varying vec3 vN; varying vec3 vP;
+      void main(){ float rim = pow(1.0 - abs(dot(normalize(vN), normalize(-vP))), 2.4);
+        gl_FragColor = vec4(vec3(0.33,0.56,0.95) * rim, rim * 0.75); }`,
+  })
+);
+globe.add(atmo);
+
+/* ------------------------------------------------------------- graticule */
+function latRing(lat, r) {
+  const pts = [];
+  for (let i = 0; i <= 256; i++) pts.push(toVec3(lat, (i / 256) * 360 - 180, r));
+  return new THREE.BufferGeometry().setFromPoints(pts);
+}
+function lonRing(lon, r) {
+  const pts = [];
+  for (let i = 0; i <= 256; i++) pts.push(toVec3((i / 256) * 180 - 90, lon, r));
+  return new THREE.BufferGeometry().setFromPoints(pts);
+}
+const gratMat = new THREE.LineBasicMaterial({
+  color: 0xffffff, transparent: true, opacity: 0.1, depthWrite: false,
+});
+for (let lat = -75; lat <= 75; lat += 15) globe.add(new THREE.Line(latRing(lat, R * 1.002), gratMat));
+for (let lon = -180; lon < 180; lon += 15) globe.add(new THREE.Line(lonRing(lon, R * 1.002), gratMat));
+
+const equator = new THREE.Mesh(
+  new THREE.TorusGeometry(R * 1.003, 0.0016, 6, 300),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.32 })
+);
+equator.rotation.x = Math.PI / 2;
+globe.add(equator);
+
+/* -------------------------------------------------- the two parallels */
+function parallelRing(lat, tube, color, opacity) {
+  const ringR = R * Math.cos(lat * Math.PI / 180);
+  const mesh = new THREE.Mesh(
+    new THREE.TorusGeometry(ringR * 1.004, tube, 8, 400),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity })
+  );
+  mesh.rotation.x = Math.PI / 2;
+  mesh.position.y = R * Math.sin(lat * Math.PI / 180) * 1.004;
+  return mesh;
+}
+globe.add(parallelRing(WARM_LAT, 0.0050, WARM, 0.95));
+globe.add(parallelRing(COLD_LAT, 0.0050, COLD, 0.95));
+// Each near-neighbour gets a hair-thin ring of its own: zoom in and you can see
+// Istanbul sitting just above Manhattan's line and Yalova just below it, and
+// Irkutsk sitting just below Berlin's.
+globe.add(parallelRing(IST.lat, 0.0016, 0xffe7c4, 0.55));
+globe.add(parallelRing(YAL.lat, 0.0016, 0xffe7c4, 0.55));
+globe.add(parallelRing(IRK.lat, 0.0016, 0xcfe0ff, 0.55));
+
+// The band of latitude between the two parallels — the daylight you give up.
+const band = new THREE.Mesh(
+  new THREE.SphereGeometry(R * 1.0035, 128, 48, 0, Math.PI * 2,
+    (90 - COLD_LAT) * Math.PI / 180,
+    (COLD_LAT - WARM_LAT) * Math.PI / 180),
+  new THREE.MeshBasicMaterial({
+    color: 0x5f8fd8, transparent: true, opacity: 0.17,
+    side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+  })
+);
+globe.add(band);
+
+function glowRibbon(lat, color) {
+  const r = R * Math.cos(lat * Math.PI / 180);
+  const m = new THREE.Mesh(
+    new THREE.CylinderGeometry(r * 1.006, r * 1.006, 0.034, 256, 1, true),
+    new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.08,
+      side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+    })
+  );
+  m.position.y = R * Math.sin(lat * Math.PI / 180) * 1.004;
+  return m;
+}
+globe.add(glowRibbon(WARM_LAT, WARM));
+globe.add(glowRibbon(COLD_LAT, COLD));
+
+// The bright stretch of each parallel between its two end cities. Both spans
+// are under 180° of longitude, so interpolating straight through gives the
+// shorter way round: Manhattan east across the Atlantic, Berlin east to Siberia.
+function surfaceArc(a, b, color) {
+  const pts = [];
+  for (let i = 0; i <= 220; i++) {
+    const t = i / 220;
+    pts.push(toVec3(a.lat + (b.lat - a.lat) * t,
+                    a.lon + (b.lon - a.lon) * t, R * 1.012));
+  }
+  return new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 320, 0.008, 10, false),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
+  );
+}
+globe.add(surfaceArc(NYC, IST, 0xffd79a));
+globe.add(surfaceArc(BER, IRK, 0xbcd6ff));
+
+/* ------------------------------------------------------------ city pins */
+const labels = [];
+CITIES.forEach(c => {
+  const up = toVec3(c.lat, c.lon, R).normalize();
+  const tint = c.cold ? COLD : WARM;
+
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.013, 20, 16),
+    new THREE.MeshBasicMaterial({ color: 0xfff6e8 })
+  );
+  dot.position.copy(up).multiplyScalar(R * 1.012);
+  globe.add(dot);
+
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(0.028, 20, 16),
+    new THREE.MeshBasicMaterial({
+      color: tint, transparent: true, opacity: 0.3,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    })
+  );
+  halo.position.copy(dot.position);
+  globe.add(halo);
+  c.halo = halo;
+
+  // stalk from just above the surface out to the label anchor
+  const inner = R * 1.012, outer = R * c.lift;
+  const stalk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.0021, 0.0021, outer - inner, 6),
+    new THREE.MeshBasicMaterial({ color: tint, transparent: true, opacity: 0.65 })
+  );
+  stalk.position.copy(up).multiplyScalar((inner + outer) / 2);
+  stalk.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+  globe.add(stalk);
+
+  const anchor = new THREE.Object3D();
+  anchor.position.copy(up).multiplyScalar(outer);
+  globe.add(anchor);
+
+  // Name + daylight only. The latitude lives in the table; with five cities on
+  // screen the extra 70px of pill was the difference between readable and not.
+  const el = document.createElement('div');
+  el.className = 'label' + (c.cold ? ' cold' : '');
+  el.innerHTML = `<span class="pill">${c.name}<small>${hm(c.short)}</small></span>`;
+  document.body.appendChild(el);
+
+  const leader = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  if (c.cold) leader.classList.add('cold');
+  document.getElementById('leaders').appendChild(leader);
+
+  labels.push({ el, anchor, leader, pill: el.firstElementChild, prefer: c.prefer });
+});
+
+/* ----------------------------------------------------------------- stars */
+(function stars() {
+  const n = 2600, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(26 + Math.random() * 24);
+    pos.set([v.x, v.y, v.z], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({
+    color: 0xffffff, size: 0.11, sizeAttenuation: true, transparent: true, opacity: 0.75,
+  })));
+})();
+
+/* ----------------------------------------------------------------- light */
+// Deliberately flat lighting: every city should be legible at once, so the
+// ambient term does most of the work and the sun only adds shape.
+scene.add(new THREE.AmbientLight(0xffffff, 1.45));
+const sun = new THREE.DirectionalLight(0xfff3e2, 1.45);
+sun.position.copy(toVec3(16, MID_LON, 8));
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0x8fb0e8, 0.75);
+fill.position.copy(toVec3(-16, MID_LON + 180, 8));
+scene.add(fill);
+
+/* ------------------------------------------------------------- viewpoints */
+let flight = null;
+function fly(pos, look = new THREE.Vector3(0, 0, 0), ms = 1400) {
+  flight = {
+    fromPos: camera.position.clone(), toPos: pos.clone(),
+    fromTgt: controls.target.clone(), toTgt: look.clone(),
+    t0: performance.now(), ms,
+  };
+}
+
+const isNarrow = () => innerWidth <= 860;
+
+function fitDistance(scale = 1) {
+  const margin = (isNarrow() ? 1.42 : 1.20) * scale;
+  const vFov = camera.fov * Math.PI / 180;
+  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+  const need = R * margin / Math.sin(Math.min(vFov, hFov) / 2);
+  return Math.min(Math.max(need, 1.7), 7.5);
+}
+
+function layout() {
+  // Clamp to >=1: during a reload the viewport can briefly report zero height,
+  // which makes aspect Infinity and every subsequent projection come out NaN.
+  const w = Math.max(1, innerWidth), h = Math.max(1, innerHeight);
+  camera.aspect = w / h;
+
+  // A positive y offset slides the render window down the virtual frame, which
+  // lifts the scene in the image; negative settles it lower. Narrow layouts lift
+  // the globe clear of the readout panel; wide ones nudge it down instead, so the
+  // northern hemisphere — where every city here lives — sits nearer the middle.
+  const shift = isNarrow() ? h * 0.15 : h * -0.06;
+  camera.setViewOffset(w, h, 0, shift, w, h);
+
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+
+// Sitting in the plane of a parallel, aimed at that plane's centre, flattens
+// the ring into a straight line — and Berlin's ring then floats clearly above it.
+function inPlaneOfParallel(lat, lon, dist) {
+  const y = R * Math.sin(lat * Math.PI / 180);
+  const h = Math.sqrt(Math.max(dist * dist - y * y, 0.04));
+  const dir = toVec3(0, lon, 1);
+  return new THREE.Vector3(dir.x * h, y, dir.z * h);
+}
+const ringCentre = lat => new THREE.Vector3(0, R * Math.sin(lat * Math.PI / 180), 0);
+
+const city = c => () => fly(toVec3(c.lat, c.lon, fitDistance(0.78)));
+const VIEWS = {
+  all:  () => fly(toVec3(WARM_LAT + 14, MID_LON, fitDistance())),
+  // flatten Manhattan's parallel: Manhattan, Istanbul and Yalova on one line
+  warmEdge: () => fly(inPlaneOfParallel(WARM_LAT, MID_LON, fitDistance(1.1)),
+                      ringCentre(WARM_LAT)),
+  // flatten Berlin's parallel: Berlin and Irkutsk on one line, 91° of longitude apart
+  coldEdge: () => fly(inPlaneOfParallel(COLD_LAT, COLD_MID_LON, fitDistance(1.1)),
+                      ringCentre(COLD_LAT)),
+};
+
+layout();
+camera.position.copy(toVec3(WARM_LAT + 14, MID_LON, fitDistance()));
+controls.update();
+
+const spinBtn = document.getElementById('btn-spin');
+controls.autoRotate = true;
+spinBtn.onclick = () => {
+  controls.autoRotate = !controls.autoRotate;
+  spinBtn.classList.toggle('on', controls.autoRotate);
+};
+function stopSpin() { controls.autoRotate = false; spinBtn.classList.remove('on'); }
+const bind = (id, fn) => document.getElementById(id).onclick = () => { stopSpin(); fn(); };
+bind('btn-all',       VIEWS.all);
+bind('btn-edge-warm', VIEWS.warmEdge);
+bind('btn-edge-cold', VIEWS.coldEdge);
+bind('btn-ber',  city(BER));
+bind('btn-irk',  city(IRK));
+bind('btn-nyc',  city(NYC));
+bind('btn-ist',  city(IST));
+bind('btn-yal',  city(YAL));
+
+/* ------------------------------------------------------------------ loop */
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const tmp = new THREE.Vector3();
+// Must match the 12px left/right on .label .pill in the stylesheet.
+const PILL_GAP = 12;
+
+function tick(now) {
+  if (flight) {
+    const t = ease(Math.min(1, (now - flight.t0) / flight.ms));
+    camera.position.lerpVectors(flight.fromPos, flight.toPos, t);
+    controls.target.lerpVectors(flight.fromTgt, flight.toTgt, t);
+    if (t === 1) flight = null;
+  }
+  controls.update();
+
+  const pulse = 1 + Math.sin(now / 520) * 0.18;
+  CITIES.forEach(c => c.halo.scale.setScalar(pulse));
+
+  // Project every label, then push apart any that landed on top of each other.
+  // `lift` alone is not enough: near the limb the radial direction is almost
+  // perpendicular to the view, so lift separates labels sideways, not vertically.
+  // All reads first, all writes after, so measuring pill widths costs one layout.
+  // The readout and the control column are opaque cards painted above the pills,
+  // so a pill underneath one is simply invisible. Treat them as no-go rectangles.
+  // The header counts too: its top band is solid, not just a soft gradient.
+  const blockers = ['#panel', '#controls', 'header']
+    .map(sel => document.querySelector(sel))
+    .filter(Boolean)
+    .map(el => el.getBoundingClientRect());
+
+  const camDir = camera.position.clone().normalize();
+  labels.forEach(l => {
+    l.anchor.getWorldPosition(tmp);
+    l.visible = tmp.clone().normalize().dot(camDir) > 0.08;
+    const p = tmp.project(camera);
+    l.x = (p.x * 0.5 + 0.5) * innerWidth;
+    l.y = (-p.y * 0.5 + 0.5) * innerHeight;
+    l.w = l.pill.offsetWidth || 140;
+    l.h = l.pill.offsetHeight || 26;
+    l.placed = l.y;
+  });
+
+  const leftFor  = (l, flip) => flip ? l.x - PILL_GAP - l.w : l.x + PILL_GAP;
+  const onScreen = (left, w) => left > 8 && left + w < innerWidth - 8;
+  const blocked  = (left, top, w, h) => blockers.some(b =>
+    left < b.right && left + w > b.left && top < b.bottom && top + h > b.top);
+
+  // Pick a side: preferred first, but only if it stays on screen AND clear of the
+  // cards. Falling back to the other side is usually enough to escape the readout.
+  labels.forEach(l => {
+    const order = l.prefer === 'left' ? [true, false] : [false, true];
+    const top = l.placed - l.h / 2;
+    let side = order.find(f => onScreen(leftFor(l, f), l.w) &&
+                               !blocked(leftFor(l, f), top, l.w, l.h));
+    if (side === undefined) side = order.find(f => onScreen(leftFor(l, f), l.w));
+    l.flip = side === undefined ? order[0] : side;
+    l.left = leftFor(l, l.flip);
+    l.right = l.left + l.w;
+  });
+
+  // For a pill still behind a card — both sides blocked, or the header spanning
+  // the full width so there is no side to escape to — slide it vertically clear.
+  function escapeBlockers() {
+    labels.forEach(l => {
+      if (!l.visible) return;
+      blockers.forEach(b => {
+        const top = l.placed - l.h / 2;
+        if (l.left < b.right && l.right > b.left && top < b.bottom && top + l.h > b.top) {
+          const above = b.top - l.h - 6, below = b.bottom + 6;
+          const goUp = Math.abs(top - above) <= Math.abs(below - top);
+          l.placed = ((goUp && above > 8) ? above : below) + l.h / 2;
+        }
+      });
+    });
+  }
+
+  // Run before de-collision so pills start from legal positions, and again after,
+  // since de-collision only ever pushes downward and can nudge one back under the
+  // readout. Two passes settle every arrangement these five cities produce.
+  escapeBlockers();
+
+  // Push apart any pills whose actual rectangles overlap. Compared against every
+  // label already placed, not just the previous one, so a third pill landing in
+  // a gap that two others have just vacated still clears both.
+  const MIN_GAP = 27;
+  const stack = labels.filter(l => l.visible).sort((a, b) => a.placed - b.placed);
+  for (let i = 1; i < stack.length; i++) {
+    const cur = stack[i];
+    for (let j = 0; j < i; j++) {
+      const prev = stack[j];
+      const overlapsX = cur.left < prev.right && prev.left < cur.right;
+      if (overlapsX && cur.placed - prev.placed < MIN_GAP) {
+        cur.placed = prev.placed + MIN_GAP;
+      }
+    }
+  }
+
+  escapeBlockers();
+
+  labels.forEach(l => {
+    // Fail safe rather than writing NaN into the DOM if a projection goes bad.
+    if (!Number.isFinite(l.x) || !Number.isFinite(l.placed)) {
+      l.el.style.opacity = 0;
+      l.leader.style.opacity = 0;
+      return;
+    }
+    l.el.style.left = `${l.x}px`;
+    l.el.style.top  = `${l.placed}px`;
+    l.el.classList.toggle('flip', l.flip);
+    l.el.style.opacity = l.visible ? 1 : 0;
+
+    // Tie the pill back to its stalk tip: a flat 12px connector normally, and a
+    // visible diagonal only when de-collision has pushed the pill off its tip.
+    const nearX = l.flip ? l.x - PILL_GAP : l.x + PILL_GAP;
+    l.leader.setAttribute('x1', l.x);
+    l.leader.setAttribute('y1', l.y);
+    l.leader.setAttribute('x2', nearX);
+    l.leader.setAttribute('y2', l.placed);
+    l.leader.style.opacity = l.visible ? 1 : 0;
+  });
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  layout();
+  if (flight) return;
+  const offset = camera.position.clone().sub(controls.target);
+  if (offset.length() > 2.2) {
+    camera.position.copy(controls.target).add(offset.setLength(fitDistance()));
+  }
+});
+
+window.__globeReady = true;
+document.getElementById('note').remove();
+</script>
+</body>
+</html>
