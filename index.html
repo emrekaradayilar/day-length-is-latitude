@@ -49,10 +49,17 @@
     background: var(--panel); backdrop-filter: blur(14px);
     border: 1px solid var(--line); border-radius: 14px;
   }
-  #panel h2 {
-    margin: 0 0 4px; font-size: 10px; letter-spacing: 0.2em;
+  /* Styled as the old heading on wide screens; becomes the collapse control on
+     narrow ones, where the full table would otherwise bury the globe. */
+  #panel-toggle {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    width: 100%; margin: 0 0 4px; padding: 0;
+    background: none; border: 0; border-radius: 0; cursor: default;
+    font: inherit; font-size: 10px; letter-spacing: 0.2em;
     text-transform: uppercase; color: var(--dim); font-weight: 500;
   }
+  #panel-toggle:hover { color: var(--dim); background: none; border-color: transparent; }
+  #panel-toggle i { display: none; }
   table { width: 100%; border-collapse: collapse; margin-top: 10px; }
   th {
     font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
@@ -135,13 +142,48 @@
     z-index: 6; color: var(--dim); font-size: 13px; text-align: center;
   }
   @media (max-width: 860px) {
-    header { padding: 18px; }
-    #panel { left: 14px; right: 14px; bottom: 72px; width: auto; }
-    #controls { right: 14px; bottom: 14px; flex-direction: row; flex-wrap: wrap-reverse;
-                justify-content: flex-end; max-width: calc(100% - 28px); }
-    button { padding: 7px 12px; font-size: 12px; }
+    header { padding: 14px 16px 12px; }
+    .eyebrow { font-size: 10px; margin-bottom: 5px; }
+    h1 { font-size: clamp(19px, 5.4vw, 30px); line-height: 1.15; }
+    .sub { font-size: 12.5px; line-height: 1.42; margin-top: 8px; max-width: none; }
+
+    /* Collapsed by default: the table is three screens of chrome on a phone. */
+    #panel {
+      left: 12px; right: 12px; bottom: 62px; width: auto; padding: 11px 14px;
+    }
+    #panel-toggle { cursor: pointer; font-size: 10px; margin: 0; }
+    #panel-toggle i {
+      display: block; width: 7px; height: 7px; flex: 0 0 auto;
+      border-right: 1.5px solid var(--dim); border-bottom: 1.5px solid var(--dim);
+      transform: translateY(-2px) rotate(45deg); transition: transform .2s;
+    }
+    #panel.open #panel-toggle { margin-bottom: 4px; }
+    #panel.open #panel-toggle i { transform: translateY(1px) rotate(225deg); }
+    #panel-body { display: none; }
+    #panel.open #panel-body {
+      display: block; max-height: 50vh; overflow-y: auto; overscroll-behavior: contain;
+    }
+    th { font-size: 9px; }
+    td { font-size: 11px; padding: 5px 0; }
+    td:first-child { font-size: 12px; }
+    .verdict { font-size: 12px; margin-top: 12px; padding-top: 11px; }
+
+    /* One swipeable row instead of four stacked rows of buttons. */
+    #controls {
+      left: 12px; right: 12px; bottom: 12px;
+      flex-direction: row; flex-wrap: nowrap; gap: 6px;
+      justify-content: flex-start; align-items: center;
+      overflow-x: auto; overflow-y: hidden;
+      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+      -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10px,
+                          #000 calc(100% - 18px), transparent 100%);
+    }
+    #controls::-webkit-scrollbar { display: none; }
+    #controls button { flex: 0 0 auto; padding: 8px 13px; font-size: 12px; }
     .hint { display: none; }
-    .sub { font-size: 13px; }
+
+    .label .pill { font-size: 11px; padding: 3px 8px; }
+    .label .pill small { margin-left: 5px; }
   }
 </style>
 </head>
@@ -156,14 +198,18 @@
 </header>
 
 <div id="panel">
-  <h2>Hours of daylight</h2>
-  <table>
-    <thead>
-      <tr><th>City</th><th>Lat</th><th>Shortest</th><th>Longest</th></tr>
-    </thead>
-    <tbody id="tbody"></tbody>
-  </table>
-  <div class="verdict" id="verdict">—</div>
+  <button id="panel-toggle" aria-expanded="true" aria-controls="panel-body">
+    <span>Hours of daylight</span><i aria-hidden="true"></i>
+  </button>
+  <div id="panel-body">
+    <table>
+      <thead>
+        <tr><th>City</th><th>Lat</th><th>Shortest</th><th>Longest</th></tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="verdict" id="verdict">—</div>
+  </div>
 </div>
 
 <div id="controls">
@@ -546,7 +592,7 @@ function fly(pos, look = new THREE.Vector3(0, 0, 0), ms = 1400) {
 const isNarrow = () => innerWidth <= 860;
 
 function fitDistance(scale = 1) {
-  const margin = (isNarrow() ? 1.42 : 1.20) * scale;
+  const margin = (isNarrow() ? 1.26 : 1.20) * scale;
   const vFov = camera.fov * Math.PI / 180;
   const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
   const need = R * margin / Math.sin(Math.min(vFov, hFov) / 2);
@@ -560,10 +606,11 @@ function layout() {
   camera.aspect = w / h;
 
   // A positive y offset slides the render window down the virtual frame, which
-  // lifts the scene in the image; negative settles it lower. Narrow layouts lift
-  // the globe clear of the readout panel; wide ones nudge it down instead, so the
-  // northern hemisphere — where every city here lives — sits nearer the middle.
-  const shift = isNarrow() ? h * 0.15 : h * -0.06;
+  // lifts the scene in the image; negative settles it lower. Either way the globe
+  // goes a little low, so the northern hemisphere — where every city here lives —
+  // sits nearer the middle. The header claims a similar share of the screen at both
+  // sizes (~30%), so the same shift centres the globe in the free band either way.
+  const shift = h * -0.06;
   camera.setViewOffset(w, h, 0, shift, w, h);
 
   camera.updateProjectionMatrix();
@@ -594,6 +641,15 @@ const VIEWS = {
 layout();
 camera.position.copy(toVec3(WARM_LAT + 14, MID_LON, fitDistance()));
 controls.update();
+
+// Collapse control for the readout. Inert on wide screens, where CSS keeps the
+// body visible regardless of this class.
+const panelEl = document.getElementById('panel');
+const panelToggle = document.getElementById('panel-toggle');
+panelToggle.onclick = () => {
+  const open = panelEl.classList.toggle('open');
+  panelToggle.setAttribute('aria-expanded', String(open));
+};
 
 const spinBtn = document.getElementById('btn-spin');
 controls.autoRotate = true;
@@ -668,8 +724,15 @@ function tick(now) {
                                !blocked(leftFor(l, f), top, l.w, l.h));
     if (side === undefined) side = order.find(f => onScreen(leftFor(l, f), l.w));
     l.flip = side === undefined ? order[0] : side;
-    l.left = leftFor(l, l.flip);
+
+    // Clamp the pill inside the viewport. On a phone a city near the limb can
+    // project its anchor off-screen entirely, and without this the pill hangs off
+    // the edge with its border cut. The leader still points at the true anchor, so
+    // the connection reads even once the pill has been pulled back into view.
+    l.left = Math.min(Math.max(leftFor(l, l.flip), 8), Math.max(8, innerWidth - 8 - l.w));
     l.right = l.left + l.w;
+    // Where the anchor div must sit for CSS to land the pill at that clamped spot.
+    l.divX = l.flip ? l.right + PILL_GAP : l.left - PILL_GAP;
   });
 
   // For a pill still behind a card — both sides blocked, or the header spanning
@@ -713,19 +776,22 @@ function tick(now) {
 
   labels.forEach(l => {
     // Fail safe rather than writing NaN into the DOM if a projection goes bad.
-    if (!Number.isFinite(l.x) || !Number.isFinite(l.placed)) {
+    if (!Number.isFinite(l.divX) || !Number.isFinite(l.placed)) {
       l.el.style.opacity = 0;
       l.leader.style.opacity = 0;
       return;
     }
-    l.el.style.left = `${l.x}px`;
+    // Keep the pill on screen vertically too, for the same reason.
+    l.placed = Math.min(Math.max(l.placed, l.h / 2 + 8), innerHeight - l.h / 2 - 8);
+
+    l.el.style.left = `${l.divX}px`;
     l.el.style.top  = `${l.placed}px`;
     l.el.classList.toggle('flip', l.flip);
     l.el.style.opacity = l.visible ? 1 : 0;
 
     // Tie the pill back to its stalk tip: a flat 12px connector normally, and a
-    // visible diagonal only when de-collision has pushed the pill off its tip.
-    const nearX = l.flip ? l.x - PILL_GAP : l.x + PILL_GAP;
+    // visible diagonal once de-collision or clamping has moved the pill off it.
+    const nearX = l.flip ? l.divX - PILL_GAP : l.divX + PILL_GAP;
     l.leader.setAttribute('x1', l.x);
     l.leader.setAttribute('y1', l.y);
     l.leader.setAttribute('x2', nearX);
