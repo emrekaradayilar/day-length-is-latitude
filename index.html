@@ -228,24 +228,47 @@
 <div id="note">Loading globe…</div>
 
 <script>
+  // 7s was short enough that slow mobile connections tripped this, and the old
+  // text blamed the CDN for what is just as often an ad-blocker, a network filter
+  // or a browser too old for import maps. Longer, and honest about not knowing.
   setTimeout(() => {
     if (window.__globeReady) return;
     const n = document.getElementById('note');
-    if (n) n.innerHTML = 'Could not reach the three.js CDN.<br>' +
-      'This page needs a network connection the first time it loads.';
-  }, 7000);
-</script>
-
-<script type="importmap">
-{ "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-} }
+    if (n) n.innerHTML = "Couldn't load the 3D library." +
+      '<br><span style="font-size:12px;opacity:.7">Tried a local copy and two CDNs — ' +
+      'an ad-blocker or network filter may be blocking them.</span>';
+  }, 20000);
 </script>
 
 <script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+// Sources are loaded by URL rather than through an import map. Import maps need
+// Safari 16.4+ / Firefox 108+, and an older browser failed here with an error
+// that wrongly blamed the CDN. Every URL below resolves its own internal imports,
+// so no map is required and the browser floor drops a long way.
+//
+// A vendor/ copy wins when present, which makes the page independent of any CDN;
+// without one it falls through so a single blocked host cannot take the page down.
+const SOURCES = [
+  { three: './vendor/three.module.js',
+    orbit: './vendor/OrbitControls.js' },
+  { three: 'https://cdn.jsdelivr.net/npm/three@0.160.0/+esm',
+    orbit: 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js/+esm' },
+  { three: 'https://esm.sh/three@0.160.0',
+    orbit: 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js' },
+];
+
+let THREE, OrbitControls;
+for (const src of SOURCES) {
+  try {
+    THREE = await import(src.three);
+    ({ OrbitControls } = await import(src.orbit));
+    if (THREE && OrbitControls) break;
+  } catch (err) {
+    console.warn('[globe] source unavailable:', src.three, '—', err.message);
+  }
+  THREE = OrbitControls = undefined;
+}
+if (!THREE || !OrbitControls) throw new Error('no three.js source reachable');
 
 /* ------------------------------------------------------------------ data */
 // `lift` is how far the label floats off the surface. Istanbul and Yalova are
@@ -371,23 +394,35 @@ const earthMat = new THREE.MeshStandardMaterial({
 });
 globe.add(new THREE.Mesh(new THREE.SphereGeometry(R, 128, 96), earthMat));
 
-new THREE.TextureLoader().load(
+// Same local-first idea for the map: a vendored copy if there is one, else the CDN.
+const TEXTURES = [
+  './vendor/earth_atmos_2048.jpg',
   'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/earth_atmos_2048.jpg',
-  tex => {
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    earthMat.map = tex;
-    // Re-use the albedo as a dim emissive so the night side stays readable
-    // instead of going black — this is an explainer, not a renderer demo.
-    earthMat.emissiveMap = tex;
-    earthMat.emissive = new THREE.Color(0xffffff);
-    earthMat.emissiveIntensity = 0.3;
-    earthMat.color.set(0xffffff);
-    earthMat.needsUpdate = true;
-  },
-  undefined,
-  () => toast('Map texture offline — showing the bare globe.')
-);
+];
+
+(function loadEarthTexture(i = 0) {
+  if (i >= TEXTURES.length) {
+    toast('Map texture unavailable — showing the bare globe.');
+    return;
+  }
+  new THREE.TextureLoader().load(
+    TEXTURES[i],
+    tex => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      earthMat.map = tex;
+      // Re-use the albedo as a dim emissive so the night side stays readable
+      // instead of going black — this is an explainer, not a renderer demo.
+      earthMat.emissiveMap = tex;
+      earthMat.emissive = new THREE.Color(0xffffff);
+      earthMat.emissiveIntensity = 0.3;
+      earthMat.color.set(0xffffff);
+      earthMat.needsUpdate = true;
+    },
+    undefined,
+    () => loadEarthTexture(i + 1)
+  );
+})();
 
 function toast(msg, ms = 3200) {
   const el = document.createElement('div');
